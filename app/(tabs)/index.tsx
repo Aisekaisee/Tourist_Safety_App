@@ -1,10 +1,11 @@
 import { loadContacts } from '@/lib/contactsStorage';
+import { geofencingService, SOSAlert } from '@/lib/geofencingService';
 import { normalizePhoneNumber } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import * as SMS from 'expo-sms';
-import { TriangleAlert as AlertTriangle, ChevronRight, Clock, MapPin, Phone, Shield } from 'lucide-react-native';
+import { AlertCircle, TriangleAlert as AlertTriangle, ChevronRight, Clock, MapPin, Phone, Shield } from 'lucide-react-native';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
@@ -16,6 +17,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Accelerometer } from 'expo-sensors';
+
 
 const { width } = Dimensions.get('window');
 
@@ -24,6 +28,9 @@ export default function HomeScreen() {
   const [location, setLocation] = useState('Downtown Area, City Center');
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [isSosActive, setIsSosActive] = useState(false);
+  const [isGeofencingActive, setIsGeofencingActive] = useState(false);
+  const [activeSOSAlert, setActiveSOSAlert] = useState<SOSAlert | null>(null);
+  const [geofencingStatus, setGeofencingStatus] = useState<string>('Inactive');
   const locationWatcher = useRef<Location.LocationSubscription | null>(null);
 
   const getSafetyColor = (score: number) => {
@@ -108,6 +115,8 @@ export default function HomeScreen() {
     try {
       const contacts = await loadContacts();
       const defaultCode = process.env.EXPO_PUBLIC_DEFAULT_COUNTRY_CODE || '+1';
+      const primaryContact = contacts.find(c => c.isPrimary) || contacts[0];
+
       const phones = (contacts || [])
         .map(c => normalizePhoneNumber(c.phone, defaultCode))
         .filter((p): p is string => Boolean(p));
@@ -122,6 +131,19 @@ export default function HomeScreen() {
           const recipientList = phones.join(',');
           const url = `sms:${recipientList}?&body=${encoded}`;
           await Linking.openURL(url);
+        }
+      }
+
+      // Auto dial the primary or first emergency contact AFTER the SMS composer resolves/returns
+      if (primaryContact) {
+        const normalizedPhone = normalizePhoneNumber(primaryContact.phone, defaultCode);
+        if (normalizedPhone) {
+          // Add a brief timeout to let the transition complete smoothly
+          setTimeout(() => {
+            Linking.openURL(`tel:${normalizedPhone}`).catch(err =>
+              console.warn('Failed to make call:', err)
+            );
+          }, 500);
         }
       }
     } catch {
@@ -145,6 +167,12 @@ export default function HomeScreen() {
       }
     );
   };
+
+  const startSosRef = useRef(startSos);
+  useEffect(() => {
+    startSosRef.current = startSos;
+  });
+
 
   const stopSos = async () => {
     if (locationWatcher.current) {
@@ -184,6 +212,106 @@ export default function HomeScreen() {
     } catch {}
   };
 
+  // Initialize geofencing service
+  useEffect(() => {
+    // Set up geofencing callbacks
+    geofencingService.setOnSOSTriggered((alert: SOSAlert) => {
+      setActiveSOSAlert(alert);
+      setIsSosActive(true);
+      setGeofencingStatus(`SOS Active - ${alert.zoneName}`);
+      console.log('SOS Alert triggered:', alert);
+    });
+
+    geofencingService.setOnLocationUpdate((coords) => {
+      setLastUpdate(new Date());
+      // Update location display with reverse geocoding
+      Location.reverseGeocodeAsync(coords).then(geo => {
+        const name = geo[0]
+          ? `${geo[0].name ?? geo[0].street ?? ''}, ${geo[0].city ?? geo[0].region ?? ''}`.replace(/^,\s*/, '')
+          : undefined;
+        if (name) setLocation(name);
+      }).catch(console.error);
+    });
+
+    // Start geofencing automatically
+    startGeofencing();
+
+    return () => {
+      geofencingService.stopGeofencing();
+    };
+  }, []);
+
+  const startGeofencing = async () => {
+    try {
+      await geofencingService.startGeofencing();
+      setIsGeofencingActive(true);
+      setGeofencingStatus('Active - Monitoring');
+      console.log('Geofencing started');
+    } catch (error) {
+      console.error('Failed to start geofencing:', error);
+      setGeofencingStatus('Error - Check permissions');
+    }
+  };
+
+  const stopGeofencing = () => {
+    geofencingService.stopGeofencing();
+    setIsGeofencingActive(false);
+    setGeofencingStatus('Inactive');
+    console.log('Geofencing stopped');
+  };
+
+  const cancelSOSAlert = async () => {
+    if (activeSOSAlert) {
+      await geofencingService.cancelSOS(activeSOSAlert.id);
+      setActiveSOSAlert(null);
+      setIsSosActive(false);
+      setGeofencingStatus('Active - Monitoring');
+    }
+  };
+
+  // Shake to Trigger SOS Listener
+  useEffect(() => {
+    let subscription: any = null;
+    let lastUpdate = 0;
+    const SHAKE_THRESHOLD = 2.5; // Magnitude threshold in G's
+
+    const checkAndTrigger = async () => {
+      // Check if shake trigger is enabled in settings
+      const isEnabled = await AsyncStorage.getItem('settings_shake_trigger');
+      if (isEnabled === 'true') {
+        setIsSosActive(currentActive => {
+          if (!currentActive) {
+            console.log('Shake detected! Launching Emergency SOS...');
+            startSosRef.current();
+          }
+          return currentActive;
+        });
+      }
+    };
+
+    const subscribe = () => {
+      subscription = Accelerometer.addListener(accelerometerData => {
+        const { x, y, z } = accelerometerData;
+        const acceleration = Math.sqrt(x * x + y * y + z * z);
+        const now = Date.now();
+
+        if (acceleration > SHAKE_THRESHOLD && now - lastUpdate > 3000) {
+          lastUpdate = now;
+          checkAndTrigger();
+        }
+      });
+      Accelerometer.setUpdateInterval(100);
+    };
+
+    subscribe();
+
+    return () => {
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, []);
+
   useEffect(() => {
     // Simulate real-time safety score updates
     const interval = setInterval(() => {
@@ -205,6 +333,45 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Safety Monitor</Text>
           <Text style={styles.headerSubtitle}>Real-time risk assessment</Text>
+        </View>
+
+        {/* Geofencing Status Card */}
+        <View style={styles.geofencingCard}>
+          <View style={styles.geofencingHeader}>
+            <AlertCircle size={24} color={isGeofencingActive ? '#059669' : '#6B7280'} />
+            <Text style={styles.geofencingTitle}>Geofencing Status</Text>
+          </View>
+          <Text style={[styles.geofencingStatus, { color: isGeofencingActive ? '#059669' : '#6B7280' }]}>
+            {geofencingStatus}
+          </Text>
+          {activeSOSAlert && (
+            <View style={styles.sosAlertInfo}>
+              <Text style={styles.sosAlertText}>
+                SOS Active in: {activeSOSAlert.zoneName}
+              </Text>
+              <Text style={styles.sosAlertRisk}>
+                Risk Level: {activeSOSAlert.riskLevel.toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <View style={styles.geofencingControls}>
+            <TouchableOpacity
+              style={[styles.geofencingButton, isGeofencingActive && styles.geofencingButtonActive]}
+              onPress={isGeofencingActive ? stopGeofencing : startGeofencing}
+            >
+              <Text style={[styles.geofencingButtonText, isGeofencingActive && styles.geofencingButtonTextActive]}>
+                {isGeofencingActive ? 'Stop Monitoring' : 'Start Monitoring'}
+              </Text>
+            </TouchableOpacity>
+            {activeSOSAlert && (
+              <TouchableOpacity
+                style={styles.cancelSOSButton}
+                onPress={cancelSOSAlert}
+              >
+                <Text style={styles.cancelSOSButtonText}>Cancel SOS</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Safety Score Card */}
@@ -495,5 +662,86 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1E40AF',
     lineHeight: 20,
+  },
+  geofencingCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 24,
+    marginBottom: 16,
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  geofencingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  geofencingTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginLeft: 8,
+  },
+  geofencingStatus: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 12,
+  },
+  sosAlertInfo: {
+    backgroundColor: '#FEF2F2',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#DC2626',
+  },
+  sosAlertText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#DC2626',
+    marginBottom: 4,
+  },
+  sosAlertRisk: {
+    fontSize: 12,
+    color: '#B91C1C',
+  },
+  geofencingControls: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  geofencingButton: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  geofencingButtonActive: {
+    backgroundColor: '#DC2626',
+  },
+  geofencingButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  geofencingButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  cancelSOSButton: {
+    backgroundColor: '#F59E0B',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelSOSButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
