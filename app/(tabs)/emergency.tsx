@@ -7,8 +7,16 @@ import {
   SafeAreaView,
   ScrollView,
   Alert,
+  Linking,
 } from 'react-native';
 import { Phone, MapPin, Clock, Users, CircleAlert as AlertCircle, CircleStop as StopCircle } from 'lucide-react-native';
+import { loadContacts } from '@/lib/contactsStorage';
+import { normalizePhoneNumber } from '@/lib/phone';
+import * as Location from 'expo-location';
+import * as SMS from 'expo-sms';
+import { supabase } from '@/lib/supabase';
+
+
 
 export default function EmergencyScreen() {
   const [isEmergencyActive, setIsEmergencyActive] = useState(false);
@@ -23,14 +31,90 @@ export default function EmergencyScreen() {
         {
           text: 'Activate',
           style: 'destructive',
-          onPress: () => {
-            setIsEmergencyActive(true);
-            setEmergencyStartTime(new Date());
+          onPress: async () => {
+            try {
+              const { status } = await Location.requestForegroundPermissionsAsync();
+              if (status !== 'granted') {
+                console.warn('Location permission not granted');
+              }
+
+              let currentLoc = null;
+              let readable = '';
+              try {
+                currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
+                const geocode = await Location.reverseGeocodeAsync({ latitude: currentLoc.coords.latitude, longitude: currentLoc.coords.longitude });
+                if (geocode[0]) {
+                  readable = `${geocode[0].name ?? geocode[0].street ?? ''}, ${geocode[0].city ?? geocode[0].region ?? ''}`.replace(/^,\s*/, '');
+                }
+              } catch (locErr) {
+                console.warn('Location fetch failed:', locErr);
+              }
+
+              setIsEmergencyActive(true);
+              setEmergencyStartTime(new Date());
+
+              // Upsert status to Supabase if location is available
+              if (currentLoc) {
+                const { data: userData } = await supabase.auth.getUser();
+                const user = userData.user;
+                if (user) {
+                  const name = (user.user_metadata as any)?.name || user.email || 'User';
+                  await supabase
+                    .from('user_status')
+                    .upsert({
+                      user_id: user.id,
+                      name,
+                      latitude: currentLoc.coords.latitude,
+                      longitude: currentLoc.coords.longitude,
+                      status: 'sos_active',
+                      last_update: new Date().toISOString(),
+                      location: readable || 'Unknown Location'
+                    });
+                }
+              }
+
+              const contacts = await loadContacts();
+              const defaultCode = process.env.EXPO_PUBLIC_DEFAULT_COUNTRY_CODE || '+1';
+              const primaryContact = contacts.find(c => c.isPrimary) || contacts[0];
+
+              const phones = (contacts || [])
+                .map(c => normalizePhoneNumber(c.phone, defaultCode))
+                .filter((p): p is string => Boolean(p));
+
+              if (phones.length > 0 && currentLoc) {
+                const mapsLink = `https://www.google.com/maps?q=${currentLoc.coords.latitude},${currentLoc.coords.longitude}`;
+                const body = `EMERGENCY: SOS activated${readable ? ` at ${readable}` : ''}. Location: ${currentLoc.coords.latitude.toFixed(5)}, ${currentLoc.coords.longitude.toFixed(5)}. Map: ${mapsLink}`;
+                const isAvailable = await SMS.isAvailableAsync();
+                if (isAvailable) {
+                  await SMS.sendSMSAsync(phones, body);
+                } else {
+                  const encoded = encodeURIComponent(body);
+                  const recipientList = phones.join(',');
+                  const url = `sms:${recipientList}?&body=${encoded}`;
+                  await Linking.openURL(url);
+                }
+              }
+
+              // Auto dial the primary or first emergency contact AFTER the SMS composer resolves/returns
+              if (primaryContact) {
+                const normalizedPhone = normalizePhoneNumber(primaryContact.phone, defaultCode);
+                if (normalizedPhone) {
+                  setTimeout(() => {
+                    Linking.openURL(`tel:${normalizedPhone}`).catch(err =>
+                      console.warn('Failed to make call:', err)
+                    );
+                  }, 500);
+                }
+              }
+            } catch (err) {
+              console.warn('Failed to execute emergency actions:', err);
+            }
           },
         },
       ]
     );
   };
+
 
   const handleEmergencyDeactivate = () => {
     Alert.alert(
@@ -96,7 +180,7 @@ export default function EmergencyScreen() {
           onPress={handleEmergencyDeactivate}
         >
           <StopCircle size={32} color="#DC2626" />
-          <Text style={styles.deactivateText}>I'm Safe - Stop Emergency</Text>
+          <Text style={styles.deactivateText}>I&apos;m Safe - Stop Emergency</Text>
         </TouchableOpacity>
 
         <View style={styles.emergencyActions}>
@@ -104,6 +188,7 @@ export default function EmergencyScreen() {
             <TouchableOpacity
               key={index}
               style={[styles.quickDialButton, { backgroundColor: service.color }]}
+              onPress={() => Linking.openURL(`tel:${service.number}`)}
             >
               <Phone size={24} color="#FFFFFF" />
               <Text style={styles.quickDialText}>Call {service.name}</Text>
@@ -159,6 +244,7 @@ export default function EmergencyScreen() {
               key={index}
               style={styles.quickDialItem}
               activeOpacity={0.7}
+              onPress={() => Linking.openURL(`tel:${service.number}`)}
             >
               <View style={[styles.quickDialIcon, { backgroundColor: service.color }]}>
                 <Phone size={20} color="#FFFFFF" />
