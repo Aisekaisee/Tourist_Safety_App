@@ -42,7 +42,7 @@ export default function SignInScreen() {
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryLabel}>Sign in</Text>}
       </Pressable>
       <Text style={styles.footerText}>
-        Don't have an account? <Link href="/(auth)/sign-up" style={styles.link}>Sign up</Link>
+        Don&apos;t have an account? <Link href="/(auth)/sign-up" style={styles.link}>Sign up</Link>
       </Text>
     </View>
   );

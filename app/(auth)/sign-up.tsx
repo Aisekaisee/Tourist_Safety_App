@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { Link } from 'expo-router';
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { Link, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 
 export default function SignUpScreen() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,11 +15,19 @@ export default function SignUpScreen() {
     setLoading(true);
     setError(null);
     setMessage(null);
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
-    if (signUpError) setError(signUpError.message);
-    else if (!data.session) setMessage('Check your email to confirm your account.');
+    const { error: signUpError } = await supabase.auth.signUp({ email, password });
+    if (signUpError) {
+      setError(signUpError.message);
+    } else {
+      Alert.alert(
+        'Success',
+        'Account created successfully! Please sign in.',
+        [{ text: 'OK', onPress: () => router.replace('/(auth)/sign-in') }]
+      );
+    }
     setLoading(false);
   };
+
 
   return (
     <View style={styles.container}>
