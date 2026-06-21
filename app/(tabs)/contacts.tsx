@@ -108,6 +108,20 @@ export default function ContactsScreen() {
     saveContacts(updated);
   };
 
+  const handleEditContact = () => {
+    if (!editingContact) return;
+    if (!editingContact.name || !editingContact.phone) {
+      Alert.alert('Error', 'Name and phone number are required');
+      return;
+    }
+
+    const updated = contacts.map(c => c.id === editingContact.id ? editingContact : c);
+    setContacts(updated);
+    saveContacts(updated);
+    setEditingContact(null);
+  };
+
+
   useEffect(() => {
     loadContacts().then((loaded) => {
       if (Array.isArray(loaded) && loaded.length > 0) {
@@ -116,73 +130,9 @@ export default function ContactsScreen() {
     });
   }, []);
 
-  const ContactModal = () => (
-    <Modal
-      visible={isAddModalVisible}
-      animationType="slide"
-      presentationStyle="fullScreen"
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={() => setIsAddModalVisible(false)}>
-            <X size={24} color="#6B7280" />
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>Add Emergency Contact</Text>
-          <TouchableOpacity onPress={handleAddContact} disabled={isAdding || !newContact.name || !newContact.phone}>
-            <Check size={24} color="#059669" />
-          </TouchableOpacity>
-        </View>
 
-        <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Name *</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newContact.name}
-              onChangeText={(text) => setNewContact({ ...newContact, name: text })}
-              placeholder="Enter contact name"
-              placeholderTextColor="#9CA3AF"
-            />
-          </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Phone Number *</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newContact.phone}
-              onChangeText={(text) => setNewContact({ ...newContact, phone: text })}
-              placeholder="+1 (555) 123-4567"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="phone-pad"
-            />
-          </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Email</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newContact.email}
-              onChangeText={(text) => setNewContact({ ...newContact, email: text })}
-              placeholder="contact@example.com"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="email-address"
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Relationship</Text>
-            <TextInput
-              style={styles.textInput}
-              value={newContact.relationship}
-              onChangeText={(text) => setNewContact({ ...newContact, relationship: text })}
-              placeholder="Family, Friend, Colleague, etc."
-              placeholderTextColor="#9CA3AF"
-            />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
-  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -288,7 +238,141 @@ export default function ContactsScreen() {
         </View>
       </ScrollView>
 
-      <ContactModal />
+      {/* Add Contact Modal */}
+      <Modal
+        visible={isAddModalVisible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setIsAddModalVisible(false)}>
+              <X size={24} color="#6B7280" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Add Emergency Contact</Text>
+            <TouchableOpacity onPress={handleAddContact} disabled={isAdding || !newContact.name || !newContact.phone}>
+              <Check size={24} color="#059669" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Name *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newContact.name}
+                onChangeText={(text) => setNewContact({ ...newContact, name: text })}
+                placeholder="Enter contact name"
+                placeholderTextColor="#9CA3AF"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Phone Number *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newContact.phone}
+                onChangeText={(text) => setNewContact({ ...newContact, phone: text })}
+                placeholder="+1 (555) 123-4567"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newContact.email}
+                onChangeText={(text) => setNewContact({ ...newContact, email: text })}
+                placeholder="contact@example.com"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="email-address"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Relationship</Text>
+              <TextInput
+                style={styles.textInput}
+                value={newContact.relationship}
+                onChangeText={(text) => setNewContact({ ...newContact, relationship: text })}
+                placeholder="Family, Friend, Colleague, etc."
+                placeholderTextColor="#9CA3AF"
+              />
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Edit Contact Modal */}
+      <Modal
+        visible={editingContact !== null}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setEditingContact(null)}>
+              <X size={24} color="#6B7280" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Edit Emergency Contact</Text>
+            <TouchableOpacity onPress={handleEditContact} disabled={!editingContact?.name || !editingContact?.phone}>
+              <Check size={24} color="#059669" />
+            </TouchableOpacity>
+          </View>
+
+          {editingContact && (
+            <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Name *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editingContact.name}
+                  onChangeText={(text) => setEditingContact({ ...editingContact, name: text })}
+                  placeholder="Enter contact name"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Phone Number *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editingContact.phone}
+                  onChangeText={(text) => setEditingContact({ ...editingContact, phone: text })}
+                  placeholder="+1 (555) 123-4567"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="phone-pad"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Email</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editingContact.email || ''}
+                  onChangeText={(text) => setEditingContact({ ...editingContact, email: text })}
+                  placeholder="contact@example.com"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="email-address"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Relationship</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editingContact.relationship}
+                  onChangeText={(text) => setEditingContact({ ...editingContact, relationship: text })}
+                  placeholder="Family, Friend, Colleague, etc."
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
